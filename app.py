@@ -96,6 +96,11 @@ def sidebar():
     tid = st.session_state.selected_tournament_id
 
     st.sidebar.divider()
+    st.sidebar.caption(
+        "⚠️ Los datos se almacenan localmente. "
+        "En Streamlit Cloud se pierden al reiniciar el contenedor."
+    )
+    st.sidebar.divider()
 
     if is_admin(tid):
         st.sidebar.success("✅ Sesión de administrador activa")
