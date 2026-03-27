@@ -15,6 +15,7 @@ from database import (
     update_match_result, advance_winner, initialise_bracket,
     determine_winner, format_score, update_tournament_format,
     update_match_date, get_match,
+    update_player, get_match_for_player, apply_bye_to_match,
 )
 from bracket_display import render_bracket
 
@@ -209,7 +210,7 @@ def tab_admin(tid: int):
     t = get_tournament(tid)
     st.header(f"Panel de administración — {t['name']}")
 
-    tab_res, tab_fmt = st.tabs(["📝 Resultados", "⚙️ Formato"])
+    tab_res, tab_jugadores, tab_fmt = st.tabs(["📝 Resultados", "👥 Jugadores", "⚙️ Formato"])
 
     # ── Results sub-tab ────────────────────────────────────────────────────────
     with tab_res:
@@ -393,6 +394,56 @@ def tab_admin(tid: int):
                         winner_n_e = player_name(winner_id_e, players_dict)
                         st.success(f"✅ Resultado actualizado. Ganador: **{winner_n_e}**")
                         st.rerun()
+
+    # ── Players sub-tab ────────────────────────────────────────────────────────
+    with tab_jugadores:
+        st.subheader("Editar jugadores")
+        st.caption(
+            "Puedes corregir nombres y marcar jugadores como BYE. "
+            "Al marcar como BYE, el partido de 1ª Ronda se resolverá automáticamente."
+        )
+
+        all_players = get_players(tid)
+        if not all_players:
+            st.info("No hay jugadores en este torneo.")
+        else:
+            # Show players in pairs (each pair = one R1 match)
+            for i in range(0, len(all_players), 2):
+                p1 = all_players[i]
+                p2 = all_players[i + 1] if i + 1 < len(all_players) else None
+                match_num = i // 2 + 1
+
+                with st.expander(
+                    f"Partido R1 #{match_num}: {p1['name']} vs {p2['name'] if p2 else '—'}",
+                    expanded=False,
+                ):
+                    for p in ([p1] + ([p2] if p2 else [])):
+                        st.markdown(f"**Jugador #{p['id']}**")
+                        col_name, col_bye, col_save = st.columns([3, 1, 1])
+                        with col_name:
+                            new_name = st.text_input(
+                                "Nombre",
+                                value=p["name"],
+                                key=f"pname_{p['id']}",
+                                label_visibility="collapsed",
+                            )
+                        with col_bye:
+                            new_bye = st.checkbox(
+                                "BYE",
+                                value=bool(p["is_bye"]),
+                                key=f"pbye_{p['id']}",
+                            )
+                        with col_save:
+                            if st.button("Guardar", key=f"psave_{p['id']}"):
+                                final_name = "BYE" if new_bye else new_name.strip() or p["name"]
+                                update_player(p["id"], final_name, new_bye)
+                                # If the BYE status changed, re-resolve the R1 match
+                                match = get_match_for_player(tid, p["id"], round_number=1)
+                                if match and match["status"] != "completed":
+                                    apply_bye_to_match(tid, match["id"])
+                                st.success(f"Guardado: **{final_name}**")
+                                st.rerun()
+                        st.divider()
 
     # ── Format sub-tab ─────────────────────────────────────────────────────────
     with tab_fmt:

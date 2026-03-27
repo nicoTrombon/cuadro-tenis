@@ -146,6 +146,74 @@ def get_players_dict(tournament_id):
     return {p["id"]: p for p in get_players(tournament_id)}
 
 
+def update_player(player_id, name, is_bye):
+    """Rename a player and/or flip their BYE status."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE players SET name=?, is_bye=? WHERE id=?",
+        (name, 1 if is_bye else 0, player_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_match_for_player(tournament_id, player_id, round_number=1):
+    """Return the round-1 match that contains this player (player1 or player2)."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT * FROM matches
+           WHERE tournament_id=? AND round_number=?
+           AND (player1_id=? OR player2_id=?)""",
+        (tournament_id, round_number, player_id, player_id)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def apply_bye_to_match(tournament_id, match_id):
+    """
+    If one player in a pending/completed match is a BYE, auto-resolve it as
+    a walkover for the non-BYE player and advance them.
+    If the match was already completed, undo the previous advance first.
+    """
+    match = get_match(match_id)
+    if not match:
+        return
+
+    players = get_players_dict(tournament_id)
+    p1 = players.get(match["player1_id"])
+    p2 = players.get(match["player2_id"])
+
+    if not p1 or not p2:
+        return
+
+    if p1["is_bye"] and p2["is_bye"]:
+        # Both BYE – nothing to do
+        return
+
+    if p1["is_bye"] or p2["is_bye"]:
+        winner_id = match["player2_id"] if p1["is_bye"] else match["player1_id"]
+        conn = get_connection()
+        conn.execute(
+            "UPDATE matches SET winner_id=?, status='walkover', "
+            "set1_p1=NULL, set1_p2=NULL, set2_p1=NULL, set2_p2=NULL, "
+            "set3_p1=NULL, set3_p2=NULL WHERE id=?",
+            (winner_id, match_id)
+        )
+        conn.commit()
+        conn.close()
+        advance_winner(tournament_id, match_id, winner_id)
+    else:
+        # No BYE any more – reset to pending so admin can enter result
+        conn = get_connection()
+        conn.execute(
+            "UPDATE matches SET winner_id=NULL, status='pending' WHERE id=?",
+            (match_id,)
+        )
+        conn.commit()
+        conn.close()
+
+
 # ── Matches ───────────────────────────────────────────────────────────────────
 
 def create_match(tournament_id, round_number, match_position,

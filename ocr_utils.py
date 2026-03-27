@@ -100,11 +100,17 @@ def _clean_name(text: str) -> str:
     return text
 
 
-_NUMBERED_ENTRY_RE = re.compile(r"^\d{1,2}[.\s]+(.+)$")
+# Matches: "1 NAME", "17 NAME", "1. NAME", "17.NAME", "17NAME" (number glued to name)
+_NUMBERED_ENTRY_RE = re.compile(
+    r"^\d{1,2}[.\s]*([A-ZÁÉÍÓÚÜÑa-záéíóúüñ].*)$"
+)
 
 
 def _parse_numbered_line(text: str) -> str | None:
-    """If line starts with a player number (1-64), return just the name part."""
+    """
+    If line starts with a player ranking number (1-64), return just the name part.
+    Handles: '1 NAME', '17. NAME', '17NAME' (OCR glued), '17.NAME'.
+    """
     m = _NUMBERED_ENTRY_RE.match(text.strip())
     if m:
         return m.group(1).strip()
@@ -164,12 +170,15 @@ def _extract_names_from_data(data: dict) -> list[str]:
     names = []
     for line in sorted_lines:
         text = " ".join(line["words"])
-        text = _clean_name(text)
 
-        # Try to strip leading player number (e.g. "1 FERRAN ESCRICH" → "FERRAN ESCRICH")
+        # Strip leading player number FIRST (before date cleaning),
+        # so "17 CARLOS 16/4 19:00" → "CARLOS 16/4 19:00" → "CARLOS"
         parsed = _parse_numbered_line(text)
         if parsed:
             text = parsed
+
+        # Now clean trailing dates/times and noise
+        text = _clean_name(text)
 
         if _is_discardable(text):
             continue
