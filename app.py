@@ -231,12 +231,12 @@ def tab_cuadro(tid: int):
     t = get_tournament(tid)
 
     # Format info
-    fmt = "Super Tiebreak" if t["third_set_format"] == "super_tiebreak" else "Set completo"
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Formato", f"Al mejor de {t['best_of']}")
-    col2.metric("3er set", fmt)
-    if t["third_set_format"] == "super_tiebreak":
-        col3.metric("Puntos tiebreak", t["tiebreak_points"])
+    #fmt = "Super Tiebreak" if t["third_set_format"] == "super_tiebreak" else "Set completo"
+    #col1, col2, col3 = st.columns(3)
+    #col1.metric("Formato", f"Al mejor de {t['best_of']}")
+    #col2.metric("3er set", fmt)
+    #if t["third_set_format"] == "super_tiebreak":
+    #    col3.metric("Puntos tiebreak", t["tiebreak_points"])
 
     st.header(f"Cuadro — {t['name']}")
 
