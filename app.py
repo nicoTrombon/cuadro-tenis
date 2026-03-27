@@ -18,6 +18,8 @@ from database import (
     update_player, get_match_for_player, apply_bye_to_match,
 )
 from bracket_display import render_bracket
+import s3_sync
+from database import DB_PATH
 
 # ── Env / secrets ─────────────────────────────────────────────────────────────
 try:
@@ -27,6 +29,20 @@ except ImportError:
     pass
 
 DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+
+# Inject Streamlit Cloud secrets into env vars so s3_sync (and boto3) can read them
+_S3_SECRET_KEYS = [
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION", "S3_BUCKET", "S3_DB_KEY",
+]
+try:
+    for _k in _S3_SECRET_KEYS:
+        if not os.environ.get(_k) and st.secrets.get(_k):
+            os.environ[_k] = st.secrets[_k]
+    if not os.environ.get("DEFAULT_ADMIN_PASSWORD") and st.secrets.get("DEFAULT_ADMIN_PASSWORD"):
+        DEFAULT_ADMIN_PASSWORD = st.secrets["DEFAULT_ADMIN_PASSWORD"]
+except Exception:
+    pass  # st.secrets not available locally — env vars / .env already loaded
 
 # ── App config ─────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -97,10 +113,12 @@ def sidebar():
     tid = st.session_state.selected_tournament_id
 
     st.sidebar.divider()
-    st.sidebar.caption(
-        "⚠️ Los datos se almacenan localmente. "
-        "En Streamlit Cloud se pierden al reiniciar el contenedor."
-    )
+    if s3_sync.is_configured():
+        st.sidebar.caption("☁️ Copia de seguridad S3 configurada.")
+    else:
+        st.sidebar.caption(
+            "⚠️ Sin S3 configurado — los datos se pierden al redesplegar."
+        )
     st.sidebar.divider()
 
     if is_admin(tid):
@@ -108,6 +126,18 @@ def sidebar():
         if st.sidebar.button("Cerrar sesión de admin"):
             st.session_state.admin_tournament_id = None
             st.rerun()
+
+        # ── S3 backup ──────────────────────────────────────────────────────────
+        if s3_sync.is_configured():
+            st.sidebar.divider()
+            st.sidebar.markdown("**☁️ Copia de seguridad**")
+            st.sidebar.caption("Guarda los datos antes de desplegar una nueva versión.")
+            if st.sidebar.button("💾 Guardar copia en S3"):
+                ok, msg = s3_sync.upload(DB_PATH)
+                if ok:
+                    st.sidebar.success(msg)
+                else:
+                    st.sidebar.error(msg)
     else:
         with st.sidebar.expander("🔒 Acceso administrador"):
             pwd = st.text_input("Contraseña del torneo", type="password", key="admin_pwd_input")
@@ -126,6 +156,15 @@ def sidebar():
 
 def tab_cuadro(tid: int):
     t = get_tournament(tid)
+
+    # Format info
+    fmt = "Super Tiebreak" if t["third_set_format"] == "super_tiebreak" else "Set completo"
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Formato", f"Al mejor de {t['best_of']}")
+    col2.metric("3er set", fmt)
+    if t["third_set_format"] == "super_tiebreak":
+        col3.metric("Puntos tiebreak", t["tiebreak_points"])
+
     st.header(f"Cuadro — {t['name']}")
 
     matches = get_matches(tid)
@@ -144,13 +183,6 @@ def tab_cuadro(tid: int):
     bracket_height = 44 + (2 ** total_rounds) * 38 + 40
     components.html(html, height=min(bracket_height, 700), scrolling=True)
 
-    # Format info
-    fmt = "Super Tiebreak" if t["third_set_format"] == "super_tiebreak" else "Set completo"
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Formato", f"Al mejor de {t['best_of']}")
-    col2.metric("3.er set", fmt)
-    if t["third_set_format"] == "super_tiebreak":
-        col3.metric("Puntos tiebreak", t["tiebreak_points"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

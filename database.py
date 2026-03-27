@@ -3,6 +3,8 @@ import bcrypt
 import os
 import math
 
+import s3_sync
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "tennis.db")
 
 
@@ -14,6 +16,9 @@ def get_connection():
 
 
 def init_db():
+    # Download from S3 if this is a fresh container with no local DB
+    s3_sync.download_if_missing(DB_PATH)
+
     conn = get_connection()
     c = conn.cursor()
     c.executescript("""
