@@ -1,66 +1,36 @@
 #!/usr/bin/env bash
-# deploy.sh — Back up the database to S3, then push to GitHub.
-# Streamlit Cloud automatically redeploys when main is updated.
+# deploy.sh — Push to GitHub, which triggers a Streamlit Cloud redeploy.
+#
+# BEFORE running this script:
+#   1. Open the running app on Streamlit Cloud
+#   2. Log in as admin
+#   3. Click "💾 Guardar copia en S3" in the sidebar
 #
 # Usage:
-#   ./deploy.sh                   # uses current branch HEAD
-#   ./deploy.sh "commit message"  # also commits any staged changes first
-#
-# Requirements:
-#   - AWS CLI configured (or AWS_* env vars set)
-#   - git remote 'origin' pointing to GitHub
-#   - S3_BUCKET and S3_DB_KEY env vars (or set them below)
-#
-# You can also source a .env file:
-#   set -a; source .env; set +a; ./deploy.sh
+#   ./deploy.sh                   # push current HEAD
+#   ./deploy.sh "commit message"  # commit staged changes first, then push
 
 set -euo pipefail
 
-# ── Config (override via env vars or edit here) ───────────────────────────────
-DB_PATH="${DB_PATH:-tennis.db}"
-S3_BUCKET="${S3_BUCKET:-}"
-S3_DB_KEY="${S3_DB_KEY:-tennis/tennis.db}"
-AWS_REGION="${AWS_REGION:-us-east-1}"
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 info()  { echo "  [deploy] $*"; }
-error() { echo "  [deploy] ERROR: $*" >&2; exit 1; }
 
 # ── 1. Optional: commit staged changes ───────────────────────────────────────
 if [[ $# -gt 0 && -n "$1" ]]; then
-    info "Committing staged changes: \"$1\""
-    git diff --cached --quiet || git commit -m "$1"
+    if ! git diff --cached --quiet; then
+        info "Committing staged changes: \"$1\""
+        git commit -m "$1"
+    fi
 fi
 
-# ── 2. Back up DB to S3 ───────────────────────────────────────────────────────
-if [[ -z "$S3_BUCKET" ]]; then
-    info "S3_BUCKET not set — skipping database backup."
-    info "Set S3_BUCKET (and optionally S3_DB_KEY, AWS_REGION) to enable backups."
-elif [[ ! -f "$DB_PATH" ]]; then
-    info "No local database found at '$DB_PATH' — skipping backup."
-else
-    info "Backing up '$DB_PATH' → s3://$S3_BUCKET/$S3_DB_KEY ..."
-    # Use Python / boto3 (always available as a project dependency)
-    python3 - <<PYEOF
-import boto3, os, sys
-cfg = {
-    "aws_access_key_id":     os.environ.get("AWS_ACCESS_KEY_ID"),
-    "aws_secret_access_key": os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    "region_name":           os.environ.get("AWS_REGION", "us-east-1"),
-}
-endpoint = os.environ.get("R2_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL")
-if endpoint:
-    cfg["endpoint_url"] = endpoint
-bucket = os.environ["S3_BUCKET"]
-key    = os.environ.get("S3_DB_KEY", "tennis/tennis.db")
-db     = os.environ.get("DB_PATH", "tennis.db")
-try:
-    boto3.client("s3", **cfg).upload_file(db, bucket, key)
-    print("  [deploy] Database backed up.")
-except Exception as e:
-    print(f"  [deploy] ERROR: backup failed: {e}", file=sys.stderr)
-    sys.exit(1)
-PYEOF
+# ── 2. Confirm DB was backed up ───────────────────────────────────────────────
+echo ""
+echo "  ⚠️  Have you backed up the database from the running app?"
+echo "     (Admin sidebar → 💾 Guardar copia en S3)"
+echo ""
+read -rp "  Continue deploy? [y/N] " confirm
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    info "Deploy cancelled."
+    exit 0
 fi
 
 # ── 3. Push to GitHub → triggers Streamlit Cloud redeploy ────────────────────
