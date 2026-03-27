@@ -394,12 +394,61 @@ def determine_winner(match, tournament):
     return None, sets_p1, sets_p2
 
 
-def format_score(match):
+def visible_set_scores(match, tournament):
+    """
+    Sets to show for a completed (or partial) score line: only sets that were
+    actually played. If the match ended in straight sets, a stored third-set
+    row is ignored (orphan data).
+    """
+    sets_needed = (tournament["best_of"] + 1) // 2
+    # matches table stores at most 3 sets
+    max_s = min(tournament["best_of"], 3)
+    sp1, sp2 = 0, 0
+    out = []
+    for s in range(1, max_s + 1):
+        v1 = match.get(f"set{s}_p1")
+        v2 = match.get(f"set{s}_p2")
+        if v1 is None or v2 is None:
+            break
+        if sp1 >= sets_needed or sp2 >= sets_needed:
+            break
+        if v1 == v2:
+            out.append((v1, v2))
+            break
+        out.append((v1, v2))
+        if v1 > v2:
+            sp1 += 1
+        else:
+            sp2 += 1
+    return out
+
+
+def format_score(match, tournament=None):
     """Return a human-readable score string like '6-4 3-6 10-7'."""
-    parts = []
-    for s in range(1, 4):
-        s1 = match.get(f"set{s}_p1")
-        s2 = match.get(f"set{s}_p2")
-        if s1 is not None and s2 is not None:
-            parts.append(f"{s1}-{s2}")
+    t = tournament if tournament is not None else {"best_of": 3}
+    parts = [f"{a}-{b}" for a, b in visible_set_scores(match, t)]
     return " ".join(parts)
+
+
+def match_dict_from_set_pairs(player1_id, player2_id, pairs):
+    """Build a match-shaped dict for determine_winner from list of (p1_games, p2_games)."""
+    m = {"player1_id": player1_id, "player2_id": player2_id}
+    for i, (a, b) in enumerate(pairs, 1):
+        m[f"set{i}_p1"] = a
+        m[f"set{i}_p2"] = b
+    return m
+
+
+def pairs_to_stored_sets(pairs):
+    """Map up to 3 set pairs to DB columns; unused sets are None."""
+    def coord(i, j):
+        return pairs[i][j] if len(pairs) > i else None
+
+    return (
+        coord(0, 0),
+        coord(0, 1),
+        coord(1, 0),
+        coord(1, 1),
+        coord(2, 0),
+        coord(2, 1),
+    )

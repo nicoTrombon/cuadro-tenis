@@ -5,6 +5,8 @@ Generates a scrollable, responsive single-elimination bracket.
 from __future__ import annotations
 import math
 
+from database import visible_set_scores
+
 
 UNIT = 38       # px height per player slot
 COL_W = 195     # px width of each round column
@@ -27,20 +29,18 @@ def _round_name(round_num: int, total_rounds: int) -> str:
     return f"{round_num}ª Ronda"
 
 
-def _score_label(match: dict) -> tuple[str, str]:
+def _score_label(match: dict, tournament: dict) -> tuple[str, str]:
     """Return (score_p1, score_p2) set-by-set strings, e.g. '6-4 7-5', '4-6 5-7'."""
     sets_p1, sets_p2 = [], []
-    for s in range(1, 4):
-        v1 = match.get(f"set{s}_p1")
-        v2 = match.get(f"set{s}_p2")
-        if v1 is None or v2 is None:
-            break
+    for v1, v2 in visible_set_scores(match, tournament):
         sets_p1.append(f"{v1}-{v2}")
         sets_p2.append(f"{v2}-{v1}")
     return " ".join(sets_p1), " ".join(sets_p2)
 
 
-def render_bracket(matches_by_round: dict, players_dict: dict, total_rounds: int) -> str:
+def render_bracket(
+    matches_by_round: dict, players_dict: dict, total_rounds: int, tournament: dict
+) -> str:
     """
     Render the full bracket as an HTML string ready for st.components.v1.html().
 
@@ -97,7 +97,7 @@ def render_bracket(matches_by_round: dict, players_dict: dict, total_rounds: int
             p1_name = (p1["name"] if p1 else "Por definir") if not (p1 and p1["is_bye"]) else "BYE"
             p2_name = (p2["name"] if p2 else "Por definir") if not (p2 and p2["is_bye"]) else "BYE"
 
-            sc1, sc2 = _score_label(match)
+            sc1, sc2 = _score_label(match, tournament)
 
             score_html1 = f'<span class="score">{sc1}</span>' if sc1 else ""
             score_html2 = f'<span class="score">{sc2}</span>' if sc2 else ""

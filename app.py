@@ -16,6 +16,7 @@ from database import (
     determine_winner, format_score, update_tournament_format,
     update_match_date, get_match,
     update_player, get_match_for_player, apply_bye_to_match,
+    match_dict_from_set_pairs, pairs_to_stored_sets,
 )
 from bracket_display import render_bracket
 import s3_sync
@@ -99,6 +100,67 @@ def player_name(pid, players_dict):
     if not p:
         return "Por definir"
     return "BYE" if p["is_bye"] else p["name"]
+
+
+def _set_input_max_value(set_index: int, best_of: int, third_set_format: str, tiebreak_points: int) -> int:
+    if set_index == best_of and third_set_format == "super_tiebreak":
+        return max(tiebreak_points + 10, 25)
+    return 99
+
+
+def collect_dynamic_set_scores(
+    prefix: str,
+    best_of: int,
+    tournament: dict,
+    third_set_format: str,
+    tiebreak_points: int,
+    player1_id: int,
+    player2_id: int,
+    p1_label: str,
+    p2_label: str,
+    defaults_match: dict,
+) -> list[tuple[int, int]]:
+    """
+    Render set score inputs until the match is decided or the next set would be
+    meaningless (e.g. no 3rd set after a 2-0). Stops on undecided ties (same score).
+    """
+    max_sets_ui = min(best_of, 3)
+    pairs: list[tuple[int, int]] = []
+    s = 1
+    while s <= max_sets_ui:
+        max_v = _set_input_max_value(s, best_of, third_set_format, tiebreak_points)
+        label_extra = ""
+        if s == best_of and third_set_format == "super_tiebreak":
+            label_extra = f" (Super TB a {tiebreak_points})"
+        st.markdown(f"**Set {s}**{label_extra}")
+        d1 = defaults_match.get(f"set{s}_p1")
+        d2 = defaults_match.get(f"set{s}_p2")
+        c1, c2 = st.columns(2)
+        with c1:
+            v1 = st.number_input(
+                p1_label[:20],
+                min_value=0,
+                max_value=max_v,
+                value=0 if d1 is None else int(d1),
+                key=f"{prefix}_s{s}_p1",
+            )
+        with c2:
+            v2 = st.number_input(
+                p2_label[:20],
+                min_value=0,
+                max_value=max_v,
+                value=0 if d2 is None else int(d2),
+                key=f"{prefix}_s{s}_p2",
+            )
+        pairs.append((v1, v2))
+        if v1 == v2:
+            break
+        tmp = match_dict_from_set_pairs(player1_id, player2_id, pairs)
+        w_id, _, _ = determine_winner(tmp, tournament)
+        if w_id is not None:
+            break
+        s += 1
+    return pairs
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -190,7 +252,7 @@ def tab_cuadro(tid: int):
     for m in matches:
         matches_by_round.setdefault(m["round_number"], []).append(m)
 
-    html = render_bracket(matches_by_round, players_dict, total_rounds)
+    html = render_bracket(matches_by_round, players_dict, total_rounds, t)
     bracket_height = 44 + (2 ** total_rounds) * 38 + 40
     components.html(html, height=min(bracket_height, 700), scrolling=True)
 
@@ -221,7 +283,7 @@ def tab_partidos(tid: int):
             for m in sorted(round_matches, key=lambda x: x["match_position"]):
                 p1n = player_name(m["player1_id"], players_dict)
                 p2n = player_name(m["player2_id"], players_dict)
-                score = format_score(m)
+                score = format_score(m, t)
                 date_str = m["scheduled_date"] or ""
                 status = m["status"]
 
@@ -260,6 +322,9 @@ def tab_admin(tid: int):
         matches = get_matches(tid)
         players_dict = get_players_dict(tid)
         total_rounds = t["total_rounds"]
+        best_of = t["best_of"]
+        tf = t["third_set_format"]
+        tp = t["tiebreak_points"]
 
         pending = [
             m for m in matches
@@ -291,63 +356,42 @@ def tab_admin(tid: int):
 
             st.markdown(f"### {p1n}  vs  {p2n}")
 
-            best_of = t["best_of"]
-            tf = t["third_set_format"]
-            tp = t["tiebreak_points"]
+            st.markdown(
+                "**Introducir resultado** — solo aparecen los sets necesarios "
+                "(sin 3.er set si el partido acaba 2-0)."
+            )
+            sets_data = collect_dynamic_set_scores(
+                f"pend_{sel_match_id}",
+                best_of,
+                t,
+                tf,
+                tp,
+                sel_match["player1_id"],
+                sel_match["player2_id"],
+                p1n,
+                p2n,
+                sel_match,
+            )
 
             with st.form("result_form"):
-                st.markdown("**Introducir resultado** (deja vacío los sets no jugados)")
-
-                # Date
                 existing_date = sel_match.get("scheduled_date")
                 fecha = st.date_input(
                     "Fecha del partido",
                     value=datetime.date.fromisoformat(existing_date) if existing_date else datetime.date.today(),
                 )
-
-                sets_data = []
-                cols = st.columns(best_of)
-                for s in range(1, best_of + 1):
-                    with cols[s - 1]:
-                        is_third = s == best_of
-                        if is_third and tf == "super_tiebreak":
-                            label = f"Set {s} (Super TB a {tp})"
-                            max_v = max(tp + 10, 25)
-                        else:
-                            label = f"Set {s}"
-                            max_v = 99
-                        st.markdown(f"**{label}**")
-                        v1 = st.number_input(
-                            p1n[:20], min_value=0, max_value=max_v,
-                            value=sel_match.get(f"set{s}_p1") or 0,
-                            key=f"s{s}_p1",
-                        )
-                        v2 = st.number_input(
-                            p2n[:20], min_value=0, max_value=max_v,
-                            value=sel_match.get(f"set{s}_p2") or 0,
-                            key=f"s{s}_p2",
-                        )
-                        sets_data.append((v1, v2))
-
                 submitted = st.form_submit_button("💾 Guardar resultado")
 
             if submitted:
-                # Build temporary match dict for winner determination
-                tmp = {
-                    "player1_id": sel_match["player1_id"],
-                    "player2_id": sel_match["player2_id"],
-                }
-                for s, (v1, v2) in enumerate(sets_data, 1):
-                    tmp[f"set{s}_p1"] = v1
-                    tmp[f"set{s}_p2"] = v2
-
+                tmp = match_dict_from_set_pairs(
+                    sel_match["player1_id"],
+                    sel_match["player2_id"],
+                    sets_data,
+                )
                 winner_id, sp1, sp2 = determine_winner(tmp, t)
                 if winner_id is None:
                     st.error(f"Resultado inválido: verifica los marcadores ({sp1} sets - {sp2} sets).")
                 else:
-                    s1p1, s1p2 = sets_data[0] if len(sets_data) > 0 else (None, None)
-                    s2p1, s2p2 = sets_data[1] if len(sets_data) > 1 else (None, None)
-                    s3p1, s3p2 = sets_data[2] if len(sets_data) > 2 else (None, None)
+                    s1p1, s1p2, s2p1, s2p2, s3p1, s3p2 = pairs_to_stored_sets(sets_data)
 
                     update_match_result(
                         sel_match_id,
@@ -376,6 +420,19 @@ def tab_admin(tid: int):
                 p1n_e = player_name(sel_comp["player1_id"], players_dict)
                 p2n_e = player_name(sel_comp["player2_id"], players_dict)
 
+                sets_data_e = collect_dynamic_set_scores(
+                    f"edit_{sel_comp_id}",
+                    best_of,
+                    t,
+                    tf,
+                    tp,
+                    sel_comp["player1_id"],
+                    sel_comp["player2_id"],
+                    p1n_e,
+                    p2n_e,
+                    sel_comp,
+                )
+
                 with st.form("edit_result_form"):
                     existing_date_e = sel_comp.get("scheduled_date")
                     fecha_e = st.date_input(
@@ -383,48 +440,19 @@ def tab_admin(tid: int):
                         value=datetime.date.fromisoformat(existing_date_e) if existing_date_e else datetime.date.today(),
                         key="edit_date",
                     )
-                    sets_data_e = []
-                    cols_e = st.columns(best_of)
-                    for s in range(1, best_of + 1):
-                        with cols_e[s - 1]:
-                            is_third = s == best_of
-                            if is_third and tf == "super_tiebreak":
-                                label = f"Set {s} (Super TB a {tp})"
-                                max_v = max(tp + 10, 25)
-                            else:
-                                label = f"Set {s}"
-                                max_v = 99
-                            st.markdown(f"**{label}**")
-                            v1_e = st.number_input(
-                                p1n_e[:20], min_value=0, max_value=max_v,
-                                value=sel_comp.get(f"set{s}_p1") or 0,
-                                key=f"es{s}_p1",
-                            )
-                            v2_e = st.number_input(
-                                p2n_e[:20], min_value=0, max_value=max_v,
-                                value=sel_comp.get(f"set{s}_p2") or 0,
-                                key=f"es{s}_p2",
-                            )
-                            sets_data_e.append((v1_e, v2_e))
-
                     edit_submitted = st.form_submit_button("💾 Actualizar resultado")
 
                 if edit_submitted:
-                    tmp_e = {
-                        "player1_id": sel_comp["player1_id"],
-                        "player2_id": sel_comp["player2_id"],
-                    }
-                    for s, (v1, v2) in enumerate(sets_data_e, 1):
-                        tmp_e[f"set{s}_p1"] = v1
-                        tmp_e[f"set{s}_p2"] = v2
-
+                    tmp_e = match_dict_from_set_pairs(
+                        sel_comp["player1_id"],
+                        sel_comp["player2_id"],
+                        sets_data_e,
+                    )
                     winner_id_e, sp1_e, sp2_e = determine_winner(tmp_e, t)
                     if winner_id_e is None:
                         st.error("Resultado inválido.")
                     else:
-                        s1p1_e, s1p2_e = sets_data_e[0] if len(sets_data_e) > 0 else (None, None)
-                        s2p1_e, s2p2_e = sets_data_e[1] if len(sets_data_e) > 1 else (None, None)
-                        s3p1_e, s3p2_e = sets_data_e[2] if len(sets_data_e) > 2 else (None, None)
+                        s1p1_e, s1p2_e, s2p1_e, s2p2_e, s3p1_e, s3p2_e = pairs_to_stored_sets(sets_data_e)
 
                         update_match_result(
                             sel_comp_id,
