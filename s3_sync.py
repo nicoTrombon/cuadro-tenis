@@ -45,12 +45,16 @@ def _config() -> dict | None:
 
 def _client(cfg: dict):
     import boto3
-    return boto3.client(
-        "s3",
+    kwargs = dict(
         aws_access_key_id=cfg["aws_access_key_id"],
         aws_secret_access_key=cfg["aws_secret_access_key"],
         region_name=cfg["region_name"],
     )
+    # Cloudflare R2 (or any S3-compatible service) needs a custom endpoint
+    endpoint = os.environ.get("R2_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL")
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    return boto3.client("s3", **kwargs)
 
 
 def is_configured() -> bool:

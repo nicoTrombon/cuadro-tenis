@@ -40,31 +40,27 @@ elif [[ ! -f "$DB_PATH" ]]; then
     info "No local database found at '$DB_PATH' — skipping backup."
 else
     info "Backing up '$DB_PATH' → s3://$S3_BUCKET/$S3_DB_KEY ..."
-    if command -v aws &>/dev/null; then
-        aws s3 cp "$DB_PATH" "s3://$S3_BUCKET/$S3_DB_KEY" \
-            --region "$AWS_REGION" \
-            && info "Database backed up successfully." \
-            || error "AWS S3 upload failed. Aborting deploy."
-    else
-        # Fallback: use Python / boto3 (already a project dependency)
-        python3 - <<PYEOF
+    # Use Python / boto3 (always available as a project dependency)
+    python3 - <<PYEOF
 import boto3, os, sys
 cfg = {
     "aws_access_key_id":     os.environ.get("AWS_ACCESS_KEY_ID"),
     "aws_secret_access_key": os.environ.get("AWS_SECRET_ACCESS_KEY"),
     "region_name":           os.environ.get("AWS_REGION", "us-east-1"),
 }
+endpoint = os.environ.get("R2_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL")
+if endpoint:
+    cfg["endpoint_url"] = endpoint
 bucket = os.environ["S3_BUCKET"]
 key    = os.environ.get("S3_DB_KEY", "tennis/tennis.db")
 db     = os.environ.get("DB_PATH", "tennis.db")
 try:
     boto3.client("s3", **cfg).upload_file(db, bucket, key)
-    print(f"  [deploy] Database backed up via boto3.")
+    print("  [deploy] Database backed up.")
 except Exception as e:
-    print(f"  [deploy] ERROR: boto3 upload failed: {e}", file=sys.stderr)
+    print(f"  [deploy] ERROR: backup failed: {e}", file=sys.stderr)
     sys.exit(1)
 PYEOF
-    fi
 fi
 
 # ── 3. Push to GitHub → triggers Streamlit Cloud redeploy ────────────────────
