@@ -8,7 +8,9 @@ Lifecycle:
 On the next Streamlit Cloud deploy the container starts fresh, download_if_missing()
 runs, finds the file in S3, and the data is restored.
 
-Configuration — add these to Streamlit Cloud secrets (Settings → Secrets):
+Configuration — add these to `.streamlit/secrets.toml` locally or Streamlit Cloud
+Secrets (Settings → Secrets); `app.py` copies them into the process environment
+for boto3:
 
   AWS_ACCESS_KEY_ID     = "..."
   AWS_SECRET_ACCESS_KEY = "..."

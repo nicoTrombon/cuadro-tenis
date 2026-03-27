@@ -21,29 +21,39 @@ from bracket_display import render_bracket
 import s3_sync
 from database import DB_PATH
 
-# ── Env / secrets ─────────────────────────────────────────────────────────────
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+# ── Secrets (Streamlit Cloud: Settings → Secrets; local: .streamlit/secrets.toml) ──
+# Populates os.environ so s3_sync (boto3) keeps reading the same keys.
+_DEFAULT_ADMIN_FALLBACK = "admin123"
+_SECRET_KEYS = (
+    "DEFAULT_ADMIN_PASSWORD",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION",
+    "S3_BUCKET",
+    "S3_DB_KEY",
+    "R2_ENDPOINT_URL",
+    "S3_ENDPOINT_URL",
+)
 
-DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
 
-# Inject Streamlit Cloud secrets into env vars so s3_sync (and boto3) can read them
-_S3_SECRET_KEYS = [
-    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-    "AWS_REGION", "S3_BUCKET", "S3_DB_KEY",
-    "R2_ENDPOINT_URL", "S3_ENDPOINT_URL",
-]
-try:
-    for _k in _S3_SECRET_KEYS:
-        if not os.environ.get(_k) and st.secrets.get(_k):
-            os.environ[_k] = st.secrets[_k]
-    if not os.environ.get("DEFAULT_ADMIN_PASSWORD") and st.secrets.get("DEFAULT_ADMIN_PASSWORD"):
-        DEFAULT_ADMIN_PASSWORD = st.secrets["DEFAULT_ADMIN_PASSWORD"]
-except Exception:
-    pass  # st.secrets not available locally — env vars / .env already loaded
+def _apply_streamlit_secrets_to_environ() -> None:
+    try:
+        sec = st.secrets
+    except Exception:
+        return
+    for key in _SECRET_KEYS:
+        if os.environ.get(key):
+            continue
+        try:
+            val = sec[key]
+        except Exception:
+            continue
+        if val is not None and str(val).strip() != "":
+            os.environ[key] = str(val)
+
+
+_apply_streamlit_secrets_to_environ()
+DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD") or _DEFAULT_ADMIN_FALLBACK
 
 # ── App config ─────────────────────────────────────────────────────────────────
 st.set_page_config(
