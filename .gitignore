@@ -1,0 +1,29 @@
+# Secrets
+.env
+
+# Database
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Uploads / local files
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db
